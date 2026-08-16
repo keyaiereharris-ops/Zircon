@@ -15,6 +15,7 @@ import com.mcmanager.client.skin.MojangSkinService;
 import com.mcmanager.client.skin.SkinManager;
 import com.mcmanager.client.sync.ModSyncEngine;
 import com.mcmanager.client.sync.PackSyncEngine;
+import com.mcmanager.client.update.UpdateChecker;
 import com.mcmanager.client.ui.component.Player3DRenderer;
 import com.mcmanager.core.api.ModrinthApiClient;
 import com.mcmanager.core.model.BillOfMaterials;
@@ -346,6 +347,11 @@ public class MainController {
         // Settings
         ramSlider.valueProperty().addListener((obs, oldVal, newVal) ->
                 ramLabel.setText("Max Memory Allocation (RAM): " + newVal.intValue() + " GB"));
+
+        // Auto-update check (async; never blocks startup)
+        UpdateChecker.checkForUpdatesAsync(manifest -> {
+            Platform.runLater(() -> promptUpdateDialog(manifest));
+        });
     }
 
     // ------------------------------------------------------------------
@@ -635,6 +641,42 @@ public class MainController {
                 SavedServer.recordPlayed("Custom Server", addr.trim());
                 populateServerList();
                 launchServer("Custom Server", addr.trim());
+            }
+        });
+    }
+
+    private void promptUpdateDialog(UpdateChecker.UpdateManifest manifest) {
+        String platformKey = UpdateChecker.detectPlatformKey();
+        String downloadUrl = manifest.downloads() != null ? manifest.downloads().get(platformKey) : null;
+
+        if (downloadUrl == null || downloadUrl.isBlank()) {
+            log.warn("No update download URL found for platform key: {}", platformKey);
+            return;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Zircon Launcher Update");
+        alert.setHeaderText("Version " + manifest.version() + " is available!");
+        alert.setContentText("Release Notes:\n" + manifest.releaseNotes() + "\n\nWould you like to update now?");
+
+        ButtonType btnUpdate = new ButtonType("Update & Restart", ButtonBar.ButtonData.OK_DONE);
+        ButtonType btnLater = new ButtonType("Later", ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(btnUpdate, btnLater);
+
+        alert.showAndWait().ifPresent(type -> {
+            if (type == btnUpdate) {
+                status("Downloading update " + manifest.version() + "...");
+                progressBar.setVisible(true);
+                Thread.ofVirtual().start(() -> {
+                    try {
+                        UpdateChecker.downloadAndApplyUpdate(downloadUrl, progress -> {
+                            Platform.runLater(() -> progressBar.setProgress(progress));
+                        });
+                    } catch (Exception e) {
+                        log.error("Failed to apply update", e);
+                        Platform.runLater(() -> status("Update failed: " + e.getMessage()));
+                    }
+                });
             }
         });
     }

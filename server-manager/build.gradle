@@ -24,6 +24,8 @@ dependencies {
 shadowJar {
     archiveBaseName = 'server-manager'
     archiveClassifier = 'all'
+    // Unversioned output so the Dockerfile (COPY server-manager-all.jar) matches.
+    archiveVersion = ''
     mergeServiceFiles()
 }
 

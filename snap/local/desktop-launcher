@@ -1,0 +1,4 @@
+#!/bin/sh
+# Zircon launcher entry point for the strict-confined snap.
+# Runs the shadow fat JAR with the JRE bundled via stage-packages.
+exec /usr/bin/java -jar "$SNAP/jar/client-launcher-all.jar" "$@"

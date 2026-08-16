@@ -1,0 +1,40 @@
+name: zircon
+base: core22
+version: '1.0.0'
+summary: Zircon Minecraft Launcher & Server Manager Client
+description: |
+  Zircon is an automated Minecraft launcher with mod synchronization,
+  3D player preview, offline instance management, and server integration.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+
+apps:
+  zircon:
+    command: bin/desktop-launcher
+    desktop: meta/gui/zircon.desktop
+    plugs:
+      - network
+      - text-secure-metadata
+      - home
+      - opengl
+      - audio-playback
+
+parts:
+  zircon-client:
+    plugin: dump
+    source: client-launcher/build/libs/
+    source-type: local
+    stage-packages:
+      - openjdk-21-jre
+      - libgl1-mesa-glx
+      - libpulse0
+    organize:
+      client-launcher-all.jar: jar/client-launcher-all.jar
+  launcher:
+    plugin: dump
+    source: snap/local
+    source-type: local

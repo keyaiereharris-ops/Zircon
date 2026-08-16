@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  zircon-server:
+    image: ghcr.io/your-org/zircon-server:latest
+    container_name: zircon-server
+    restart: unless-stopped
+    ports:
+      - "25565:25565" # Public Minecraft Multiplexer
+      - "25564:25564" # Web Admin Dashboard
+    volumes:
+      - ./server-data:/app/server-data

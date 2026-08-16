@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Zircon
+Comment=Zircon Minecraft Launcher & Server Manager Client
+Exec=zircon
+Terminal=false
+Type=Application
+Categories=Game;
+StartupWMClass=Zircon

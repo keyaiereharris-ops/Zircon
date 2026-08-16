@@ -1,0 +1,215 @@
+name: Build Release & Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  R2_BUCKET: zircon-releases
+
+jobs:
+  # ==================================================================
+  # JOB 1: MATRIX BUILD FOR CLIENT LAUNCHER (jpackage)
+  # ==================================================================
+  build-client-installers:
+    name: Build Launcher (${{ matrix.os_key }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            os_key: windows-x64
+            pkg_type: msi
+            artifact_ext: msi
+          - os: windows-11-arm64
+            os_key: windows-arm64
+            pkg_type: msi
+            artifact_ext: msi
+          - os: macos-13
+            os_key: macos-x64
+            pkg_type: dmg
+            artifact_ext: dmg
+          - os: macos-14
+            os_key: macos-arm64
+            pkg_type: dmg
+            artifact_ext: dmg
+          - os: ubuntu-latest
+            os_key: linux-deb
+            pkg_type: deb
+            artifact_ext: deb
+          - os: ubuntu-latest
+            os_key: linux-rpm
+            pkg_type: rpm
+            artifact_ext: rpm
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Fat JAR
+        run: ./gradlew :client-launcher:shadowJar
+
+      - name: Extract Tag Version
+        id: get_version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Install RPM Build Tools
+        if: matrix.pkg_type == 'rpm'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Run jpackage
+        shell: bash
+        run: |
+          mkdir -p dist/
+          jpackage \
+            --type ${{ matrix.pkg_type }} \
+            --dest dist/ \
+            --name Zircon \
+            --app-version ${{ steps.get_version.outputs.VERSION }} \
+            --input client-launcher/build/libs/ \
+            --main-jar client-launcher-all.jar \
+            --main-class com.mcmanager.client.Main \
+            --java-options "-Xmx2G" \
+            --vendor "Zircon"
+
+      - name: Rename Artifact for R2 Storage
+        shell: bash
+        run: |
+          mv dist/*.${{ matrix.artifact_ext }} dist/Zircon-${{ steps.get_version.outputs.VERSION }}-${{ matrix.os_key }}.${{ matrix.artifact_ext }}
+
+      - name: Upload Artifact to Cloudflare R2
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --acl public-read --follow-symlinks
+        env:
+          AWS_S3_BUCKET: ${{ env.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_S3_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          DEST_DIR: releases/${{ github.ref_name }}/
+          SOURCE_DIR: dist/
+
+  # ==================================================================
+  # JOB 2: GENERATE AND PUBLISH MANIFEST TO R2
+  # ==================================================================
+  publish-manifest:
+    name: Generate & Publish Update Manifest
+    needs: build-client-installers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Clean Version
+        id: version
+        run: echo "TAG=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Generate latest.json
+        run: |
+          R2_BASE="https://pub-r2.yourdomain.com/releases/${{ github.ref_name }}"
+          mkdir -p manifest
+          cat <<EOF > manifest/latest.json
+          {
+            "version": "${{ steps.version.outputs.TAG }}",
+            "releaseDate": "$(date -u +%Y-%m-%d)",
+            "releaseNotes": "Zircon Release ${{ github.ref_name }}",
+            "downloads": {
+              "windows-x64": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-windows-x64.msi",
+              "windows-arm64": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-windows-arm64.msi",
+              "macos-x64": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-macos-x64.dmg",
+              "macos-arm64": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-macos-arm64.dmg",
+              "linux-deb": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-linux-deb.deb",
+              "linux-rpm": "${R2_BASE}/Zircon-${{ steps.version.outputs.TAG }}-linux-rpm.rpm"
+            }
+          }
+          EOF
+
+      - name: Upload latest.json to R2 Root
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --acl public-read
+        env:
+          AWS_S3_BUCKET: ${{ env.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_S3_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          DEST_DIR: updates/
+          SOURCE_DIR: manifest/
+
+  # ==================================================================
+  # JOB 3: BUILD SNAP STORE PACKAGE
+  # ==================================================================
+  build-snap:
+    name: Build & Publish Snap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v3
+      - run: ./gradlew :client-launcher:shadowJar
+
+      - name: Build Snap
+        uses: snapcore/action-build@v1
+        id: snapcraft
+
+      - name: Publish to Snap Store
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_LOGIN_TOKEN }}
+        with:
+          snap: ${{ steps.snapcraft.outputs.snap }}
+          release: edge
+
+  # ==================================================================
+  # JOB 4: DOCKER BUILD FOR SERVER MANAGER
+  # ==================================================================
+  build-server-docker:
+    name: Build & Push Server Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v3
+      - run: ./gradlew :server-manager:shadowJar
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Multi-Arch Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./server-manager/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/zircon-server:latest
+            ghcr.io/${{ github.repository }}/zircon-server:${{ github.ref_name }}

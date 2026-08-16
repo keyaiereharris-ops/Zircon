@@ -1,0 +1,13 @@
+.git
+.gradle
+.idea
+*.file
+*.log
+build/
+client-launcher/build/
+shared-core/build/
+# Exclude everything under server-manager/build except the fat JAR the Dockerfile needs
+server-manager/build/*
+!server-manager/build/libs/
+server-manager/build/libs/*
+!server-manager/build/libs/server-manager-all.jar

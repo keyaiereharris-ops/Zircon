@@ -29,7 +29,9 @@ dependencies {
     implementation 'org.lwjgl:lwjgl-opengl'
     implementation 'org.joml:joml:1.10.7'
 
-    def lwjglNatives = ['windows', 'linux', 'macos', 'macos-arm64']
+    // All native classifiers including windows-arm64 (CI ships an ARM64 MSI),
+    // macos-arm64, plus x64 for every OS. LWJGL pulls the correct one at runtime.
+    def lwjglNatives = ['windows', 'windows-arm64', 'linux', 'macos', 'macos-arm64']
     lwjglNatives.each { os ->
         runtimeOnly "org.lwjgl:lwjgl::natives-$os"
         runtimeOnly "org.lwjgl:lwjgl-glfw::natives-$os"
@@ -40,6 +42,9 @@ dependencies {
 shadowJar {
     archiveBaseName = 'client-launcher'
     archiveClassifier = 'all'
+    // Unversioned output so CI jpackage (--main-jar client-launcher-all.jar),
+    // the snap organize rule, and release scripts all match.
+    archiveVersion = ''
     mergeServiceFiles()
 }
 
